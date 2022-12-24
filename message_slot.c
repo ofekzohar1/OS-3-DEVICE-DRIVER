@@ -45,7 +45,7 @@ int find_ch_in_minor(unsigned int ch, unsigned int minor, dev_ch *res) {
     dev_ch *prev;
 
     res = dev_minors[minor]->head;
-    while (res != NULL && curr->id != ch) {
+    while (res != NULL && res->id != ch) {
         prev = res;
         res = res->next;
     }
@@ -180,7 +180,7 @@ static ssize_t device_write(struct file *file, const char __user* buffer, size_t
 }
 
 //----------------------------------------------------------------
-static long device_ioctl(struct file *file, unsigned int ioctl_command_id, unsigned int ch_id) {
+static long device_ioctl(struct file *file, unsigned int ioctl_command_id, unsigned long ch_id) {
     unsigned int minor;
     int find_res;
     dev_ch *ch;
@@ -249,13 +249,13 @@ static void __exit simple_cleanup(void) {
 
     for (i=0; i< MAX_MINOR; ++i) {
         if (dev_minors[i] == NULL) continue;
-        curr = dev_minors[minor]->head;
+        curr = dev_minors[i]->head;
         while (curr != NULL) {
             next = curr->next;
             kfree(curr);
             curr = next;
         }
-        kfree(dev_minors[minor]);
+        kfree(dev_minors[i]);
     }
     unregister_chrdev(MAJOR_NUM, DEVICE_NAME);
 }

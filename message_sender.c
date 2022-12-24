@@ -11,7 +11,6 @@
 int main(int argc, char **argv) {
     int file_desc;
     unsigned int ch_id;
-    char **end_ptr;
 
     if (argc < 4) {
         fprintf(stderr, "# of arguments should be at least 4: %s.", strerror(EINVAL));
@@ -21,17 +20,17 @@ int main(int argc, char **argv) {
 
     file_desc = open(argv[1], O_RDWR);
     if (file_desc < 0) {
-        perror("Open failed")
+        perror("Open failed");
         exit(EXIT_FAILURE);
     }
 
     if (ioctl(file_desc, MSG_SLOT_CHANNEL, ch_id) != 0) {
-        perror("Channel assign failed")
+        perror("Channel assign failed");
         exit(EXIT_FAILURE);
     }
 
     if (write(file_desc, argv[3], strlen(argv[3])) < 0) {
-        perror("Write failed")
+        perror("Write failed");
         exit(EXIT_FAILURE);
     }
 

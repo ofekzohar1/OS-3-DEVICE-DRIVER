@@ -10,11 +10,12 @@
 
 int main(int argc, char **argv) {
     int file_desc;
+    int ret_len;
     unsigned int ch_id;
-    char **end_ptr;
+    char **end_ptr, msg_read[MSG_MAX_LEN];
 
-    if (argc < 4) {
-        fprintf(stderr, "# of arguments should be at least 4: %s.", strerror(EINVAL));
+    if (argc < 3) {
+        fprintf(stderr, "# of arguments should be at least 3: %s.", strerror(EINVAL));
         exit(EXIT_FAILURE);
     }
     ch_id = (unsigned int) atol(argv[2]);
@@ -25,16 +26,22 @@ int main(int argc, char **argv) {
         exit(EXIT_FAILURE);
     }
 
-    if (ioctl(file_desc, MSG_SLOT_CHANNEL, ch_id) != 0) {
+    if (rioctl(file_desc, MSG_SLOT_CHANNEL, ch_id) != 0) {
         perror("Channel assign failed")
         exit(EXIT_FAILURE);
     }
 
-    if (write(file_desc, argv[3], strlen(argv[3])) < 0) {
-        perror("Write failed")
+    ret_len = read(file_desc, &msg_read, MSG_MAX_LEN);
+    if (ret_len < 0) {
+        perror("Read failed")
+        exit(EXIT_FAILURE);
+    }
+    close(file_desc);
+
+    if (write(STDOUT_FILENO, msg_read, ret_len) != ret_len) {
+        fprintf(stderr, "Write to stdout failed.", strerror(ENOSPC));
         exit(EXIT_FAILURE);
     }
 
-    close(file_desc);
     return SUCCESS;
 }

@@ -41,7 +41,6 @@ int add_new_ch(unsigned int ch, unsigned int minor, dev_ch *tail, dev_ch **res) 
     tail->next = new_ch;
     *res = new_ch;
 
-    printk("new ch (%u,%u).\n", (*res)->minor, (*res)->id);
     return SUCCESS;
 }
 
@@ -135,7 +134,7 @@ static ssize_t device_read(struct file *file, char __user* buffer, size_t length
         return -ENOSPC;
     }
 
-    for(i = 0; i < length; ++i) { // Write to user buffer
+    for(i = 0; i < read_ch->msg_len; ++i) { // Write to user buffer
         if (put_user(read_ch->msg[i], &buffer[i]) < 0) {
             printk(KERN_ERR "Error writing to user buffer in file %p.\n", file);
             return -EFAULT;
@@ -143,7 +142,7 @@ static ssize_t device_read(struct file *file, char __user* buffer, size_t length
     }
 
     printk("Read succeeded in file %p.\n", file);
-    return length; // On success return the red msg length
+    return read_ch->msg_len; // On success return the red msg length
 }
 
 //---------------------------------------------------------------
@@ -208,7 +207,6 @@ static long device_ioctl(struct file *file, unsigned int ioctl_command_id, unsig
         return find_res;
     file->private_data = (void *) ch;
 
-    printk("new ch (%u,%u).\n", ch->minor, ch->id);
     printk("Ioctl succeeded in file %p.\n", file);
     return SUCCESS;
 }

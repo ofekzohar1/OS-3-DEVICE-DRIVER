@@ -26,36 +26,42 @@ static dev_ch_list* dev_minors[MAX_MINOR];
 
 //================== HELP FUNCTIONS ===========================
 
-int add_new_ch(unsigned int ch, unsigned int minor, dev_ch *tail, dev_ch *res) {
-    res = (dev_ch*) kmalloc(sizeof(dev_ch), GFP_KERNEL);
-    if (res == NULL) { // Allocation fail
+int add_new_ch(unsigned int ch, unsigned int minor, dev_ch *tail, dev_ch **res) {
+    dev_ch *new_ch;
+
+    new_ch = (dev_ch*) kmalloc(sizeof(dev_ch), GFP_KERNEL);
+    if (new_ch == NULL) { // Allocation fail
         printk(KERN_ERR "Allocation fail Minor %u channel %u.\n", minor, ch);
         return -ENOMEM;
     }
-    res->minor = minor;
-    res->id = ch;
-    res->next = NULL;
-    res->msg_len = 0; // No msg written in the channel
-    tail->next = res;
+    new_ch->minor = minor;
+    new_ch->id = ch;
+    new_ch->next = NULL;
+    new_ch->msg_len = 0; // No msg written in the channel
+    tail->next = new_ch;
+    *res = new_ch;
 
+    printk("new ch (%u,%u).\n", (*res)->minor, (*res)->id);
     return SUCCESS;
 }
 
-int find_ch_in_minor(unsigned int ch, unsigned int minor, dev_ch *res) {
-    dev_ch *prev;
+int find_ch_in_minor(unsigned int ch, unsigned int minor, dev_ch **res) {
+    dev_ch *curr, *prev;
 
-    res = dev_minors[minor]->head;
-    while (res != NULL && res->id != ch) {
-        prev = res;
-        res = res->next;
+    curr = dev_minors[minor]->head;
+    while (curr != NULL && curr->id != ch) {
+        prev = curr;
+        curr = curr->next;
     }
-    if (res == NULL) {
+    if (curr == NULL) {
         if (dev_minors[minor]->len == MAX_CHANNELS) {
             printk(KERN_ERR "Can't use channel %u. # of channels in minor %u has exceeded the limit.\n", ch,  minor);
             return -EINVAL;
         }
         return add_new_ch(ch, minor, prev, res);
     }
+
+    *res = curr;
     return SUCCESS;
 }
 
@@ -197,11 +203,12 @@ static long device_ioctl(struct file *file, unsigned int ioctl_command_id, unsig
 
     // Get the parameter given to ioctl by the process
     ch = (dev_ch *) file->private_data;
-    find_res = find_ch_in_minor(ch_id, ch->minor, ch);
+    find_res = find_ch_in_minor(ch_id, ch->minor, &ch);
     if (find_res < 0)
         return find_res;
     file->private_data = (void *) ch;
 
+    printk("new ch (%u,%u).\n", ch->minor, ch->id);
     printk("Ioctl succeeded in file %p.\n", file);
     return SUCCESS;
 }

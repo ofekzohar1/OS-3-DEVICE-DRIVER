@@ -70,8 +70,8 @@ static int device_open(struct inode *inode, struct file *file) {
 
     if (dev_minors[minor] == NULL) { // New minor == new device
         printk("Add new Message Slot device. Minor #: %u.\n", minor);
-        new_minor = (dev_ch_list*) kmalloc(sizeof(dev_ch_list), GFP_KERNEL);
-        zero_ch = (dev_ch) kmalloc(sizeof(dev_ch), GFP_KERNEL);
+        new_minor = (dev_ch_list *) kmalloc(sizeof(dev_ch_list), GFP_KERNEL);
+        zero_ch = (dev_ch *) kmalloc(sizeof(dev_ch), GFP_KERNEL);
         if (new_minor == NULL || zero_ch == NULL) { // Allocation fail
             printk(KERN_ERR "Allocation fail Minor #: %u.\n", minor);
             return -ENOMEM;
@@ -80,6 +80,7 @@ static int device_open(struct inode *inode, struct file *file) {
         zero_ch->id = 0;
         new_minor->head = zero_ch;
         new_minor->len = 0;
+        dev_minors[minor] = new_minor;
     }
     file->private_data = (void *)dev_minors[minor]->head; // Uninitialized channel == zero channel
 
@@ -106,12 +107,12 @@ static ssize_t device_read(struct file *file, char __user* buffer, size_t length
 
     printk("Invoking device_read(%p,%ld).\n", file, length);
     if (length == 0 || length > MSG_MAX_LEN) {
-    printk(KERN_ERR "Invalid message length: %d.\n", length);
+    printk(KERN_ERR "Invalid message length: %lu.\n", length);
     return -EMSGSIZE;
     }
 
     read_ch = (dev_ch *) file->private_data;
-    if (write_ch == NULL) { // Unopened file
+    if (read_ch == NULL) { // Unopened file
         printk(KERN_ERR "Unopened file %p.\n", file);
         return -EBADF;
     }
@@ -124,7 +125,7 @@ static ssize_t device_read(struct file *file, char __user* buffer, size_t length
         return -EWOULDBLOCK;
     }
     if (read_ch->msg_len > length) { // User buffer length too small
-        printk(KERN_ERR "file %p: User buffer length (%d) too small to hold msg (%u).\n", file, length, read_ch->msg_len);
+        printk(KERN_ERR "file %p: User buffer length (%lu) too small to hold msg (%u).\n", file, length, read_ch->msg_len);
         return -ENOSPC;
     }
 
@@ -147,9 +148,9 @@ static ssize_t device_write(struct file *file, const char __user* buffer, size_t
     char temp_buf[MSG_MAX_LEN];
     dev_ch *write_ch;
 
-    printk("Invoking device_write(%p,%ld).\n", file, length);
+    printk("Invoking device_write(%p,%lu).\n", file, length);
     if (length == 0 || length > MSG_MAX_LEN) {
-        printk(KERN_ERR "Invalid message length: %d.\n", length);
+        printk(KERN_ERR "Invalid message length: %lu.\n", length);
         return -EMSGSIZE;
     }
 
@@ -181,11 +182,10 @@ static ssize_t device_write(struct file *file, const char __user* buffer, size_t
 
 //----------------------------------------------------------------
 static long device_ioctl(struct file *file, unsigned int ioctl_command_id, unsigned long ch_id) {
-    unsigned int minor;
     int find_res;
     dev_ch *ch;
 
-    printk("Invoking ioctl: setting file %p with channel %u.\n", file, ch_id);
+    printk("Invoking ioctl: setting file %p with channel %lu.\n", file, ch_id);
     if (ioctl_command_id != MSG_SLOT_CHANNEL) {
         printk(KERN_ERR "Unrecognized command id: %u.\n", ioctl_command_id);
         return -EINVAL;

@@ -7,7 +7,6 @@
 #undef MODULE
 #define MODULE
 
-
 #include <linux/kernel.h>   /* We're doing kernel work */
 #include <linux/module.h>   /* Specifically, a module */
 #include <linux/fs.h>       /* for register_chrdev */
@@ -17,19 +16,35 @@
 
 MODULE_LICENSE("GPL");
 
-//Our custom definitions of IOCTL operations
+//================== DEVICE DECLARATIONS ===========================
 #include "message_slot.h"
 #define MAX_MINOR 256
-#define MAX_CHANNELS (1u << 20)
+#define MAX_CHANNELS (1u << 20) // 2^20
+
+struct dev_ch { // Device channel node
+    unsigned int minor; // Device's minor
+    unsigned int id; // Channel id
+    char msg[MSG_MAX_LEN];
+    unsigned int msg_len;
+    struct dev_ch *next; // Next channel on list
+} typedef dev_ch;
+
+struct dev_ch_list { // Device channel list
+    dev_ch *head;
+    unsigned int len; // Device's # active channels
+} typedef dev_ch_list;
 
 static dev_ch_list* dev_minors[MAX_MINOR];
 
 //================== HELP FUNCTIONS ===========================
 
+// Add new channel (#ch) to the device (#minor).
+// res assigned to point to the new channel.
+// return - 0 on success, -1 on failure with errno set to the corresponding error.
 int add_new_ch(unsigned int ch, unsigned int minor, dev_ch *tail, dev_ch **res) {
     dev_ch *new_ch;
 
-    new_ch = (dev_ch*) kmalloc(sizeof(dev_ch), GFP_KERNEL);
+    new_ch = (dev_ch*) kmalloc(sizeof(dev_ch), GFP_KERNEL); // Alloc new channel
     if (new_ch == NULL) { // Allocation fail
         printk(KERN_ERR "Allocation fail Minor %u channel %u.\n", minor, ch);
         return -ENOMEM;
@@ -38,21 +53,24 @@ int add_new_ch(unsigned int ch, unsigned int minor, dev_ch *tail, dev_ch **res) 
     new_ch->id = ch;
     new_ch->next = NULL;
     new_ch->msg_len = 0; // No msg written in the channel
-    tail->next = new_ch;
-    *res = new_ch;
+    tail->next = new_ch; // Connect to the end of the list
 
+    *res = new_ch;
     return SUCCESS;
 }
 
+// Find channel #ch in the device (#minor).
+// res assigned to point to the found channel.
+// return - 0 on success, -1 on failure with errno set to the corresponding error.
 int find_ch_in_minor(unsigned int ch, unsigned int minor, dev_ch **res) {
     dev_ch *curr, *prev;
 
     curr = dev_minors[minor]->head;
-    while (curr != NULL && curr->id != ch) {
+    while (curr != NULL && curr->id != ch) { // Move on the list until found or get to the end == NULL
         prev = curr;
         curr = curr->next;
     }
-    if (curr == NULL) {
+    if (curr == NULL) { // If not founded, produce new channel, unless # of channels limit exceeded
         if (dev_minors[minor]->len == MAX_CHANNELS) {
             printk(KERN_ERR "Can't use channel %u. # of channels in minor %u has exceeded the limit.\n", ch,  minor);
             return -EINVAL;
@@ -65,6 +83,10 @@ int find_ch_in_minor(unsigned int ch, unsigned int minor, dev_ch **res) {
 }
 
 //================== DEVICE FUNCTIONS ===========================
+
+// Open new fd according to the minor. If minor not exist yet, produce new minor.
+// Default channel set to be zero.
+// return - 0 on success, -1 on failure with errno set to the corresponding error.
 static int device_open(struct inode *inode, struct file *file) {
     unsigned int minor;
     dev_ch_list* new_minor;
@@ -83,7 +105,7 @@ static int device_open(struct inode *inode, struct file *file) {
         }
         zero_ch->minor = minor;
         zero_ch->id = 0;
-        new_minor->head = zero_ch;
+        new_minor->head = zero_ch; // Every minor's head point to default zero channel
         new_minor->len = 0;
         dev_minors[minor] = new_minor;
     }
@@ -94,6 +116,8 @@ static int device_open(struct inode *inode, struct file *file) {
 }
 
 //---------------------------------------------------------------
+// Close fd and release resources.
+// return - 0 (must succeed).
 static int device_release(struct inode *inode, struct file *file) {
     unsigned int minor;
 
@@ -103,18 +127,15 @@ static int device_release(struct inode *inode, struct file *file) {
     return SUCCESS;
 }
 
-//---------------------------------------------------------------
-// a process which has already opened
-// the device file attempts to read from it
+// Read from fd.
+// If fd not open or unset channel or no msg in channel, raise error.
+// If buffer's length cannot contain msg, raise error.
+// return - # bytes red on success, -1 on failure with errno set to the corresponding error.
 static ssize_t device_read(struct file *file, char __user* buffer, size_t length, loff_t* offset) {
     ssize_t i;
     dev_ch *read_ch;
 
     printk("Invoking device_read(%p,%ld).\n", file, length);
-    if (length == 0 || length > MSG_MAX_LEN) {
-    printk(KERN_ERR "Invalid message length: %lu.\n", length);
-    return -EMSGSIZE;
-    }
 
     read_ch = (dev_ch *) file->private_data;
     if (read_ch == NULL) { // Unopened file
@@ -136,6 +157,7 @@ static ssize_t device_read(struct file *file, char __user* buffer, size_t length
 
     for(i = 0; i < read_ch->msg_len; ++i) { // Write to user buffer
         if (put_user(read_ch->msg[i], &buffer[i]) < 0) {
+            // Writing to user failed
             printk(KERN_ERR "Error writing to user buffer in file %p.\n", file);
             return -EFAULT;
         }
@@ -145,9 +167,10 @@ static ssize_t device_read(struct file *file, char __user* buffer, size_t length
     return read_ch->msg_len; // On success return the red msg length
 }
 
-//---------------------------------------------------------------
-// A process which has already opened
-// the device file attempts to write to it
+// Write to fd.
+// If fd not open or unset channel, raise error.
+// If msg's length (buffer) too big or 0 (empty) raise error.
+// return - # bytes written on success, -1 on failure with errno set to the corresponding error.
 static ssize_t device_write(struct file *file, const char __user* buffer, size_t length, loff_t* offset) {
     ssize_t i;
     char temp_buf[MSG_MAX_LEN];
@@ -169,23 +192,27 @@ static ssize_t device_write(struct file *file, const char __user* buffer, size_t
         return -EINVAL;
     }
 
-    for(i = 0; i < length; ++i) { // Read from user buffer
+    for(i = 0; i < length; ++i) { // Read from user to temporary buffer to get whole msg
         if (get_user(temp_buf[i], &buffer[i]) < 0) {
+            // Read from user failed
             printk(KERN_ERR "Error reading from user buffer in file %p.\n", file);
             return -EFAULT;
         }
     }
 
-    for(i = 0; i < length; ++i) { // Write to channel
+    for(i = 0; i < length; ++i) { // Write msg to channel
         write_ch->msg[i] = temp_buf[i];
     }
-    write_ch->msg_len = length;
+    write_ch->msg_len = length; // Update msg length in channel
 
     printk("Write succeeded in file %p.\n", file);
     return length; // On success return the written msg length
 }
 
-//----------------------------------------------------------------
+// Set fd's reading/writing channel.
+// If command not invalid or ch_id is 0, raise error.
+// If msg's length (buffer) too big or 0 (empty) raise error.
+// return - # bytes written on success, -1 on failure with errno set to the corresponding error.
 static long device_ioctl(struct file *file, unsigned int ioctl_command_id, unsigned long ch_id) {
     int find_res;
     dev_ch *ch;
@@ -200,12 +227,11 @@ static long device_ioctl(struct file *file, unsigned int ioctl_command_id, unsig
         return -EINVAL;
     }
 
-    // Get the parameter given to ioctl by the process
-    ch = (dev_ch *) file->private_data;
-    find_res = find_ch_in_minor(ch_id, ch->minor, &ch);
+    ch = (dev_ch *) file->private_data; // Get the previous channel
+    find_res = find_ch_in_minor(ch_id, ch->minor, &ch); // Find new channel
     if (find_res < 0)
-        return find_res;
-    file->private_data = (void *) ch;
+        return find_res; // Error == allocation error in new_ch functon
+    file->private_data = (void *) ch; // Set new channel to the fd
 
     printk("Ioctl succeeded in file %p.\n", file);
     return SUCCESS;
@@ -238,11 +264,11 @@ static int __init simple_init(void) {
         return rc;
     }
 
-    printk("Registration is successful. Device: %s, Major: %d.\n", DEVICE_NAME, MAJOR_NUM);
-    for (i=0; i < MAX_MINOR; i++) {
+    for (i=0; i < MAX_MINOR; i++) { // Init the minors array with NULL pointers
         dev_minors[i] = NULL;
     }
 
+    printk("Registration is successful. Device: %s, Major: %d.\n", DEVICE_NAME, MAJOR_NUM);
     return SUCCESS;
 }
 
@@ -252,15 +278,15 @@ static void __exit simple_cleanup(void) {
     int i;
     dev_ch *curr, *next;
 
-    for (i=0; i< MAX_MINOR; ++i) {
-        if (dev_minors[i] == NULL) continue;
+    for (i=0; i< MAX_MINOR; ++i) { // Free memory
+        if (dev_minors[i] == NULL) continue; // Unused channel
         curr = dev_minors[i]->head;
-        while (curr != NULL) {
+        while (curr != NULL) { // Free channel list nodes
             next = curr->next;
             kfree(curr);
             curr = next;
         }
-        kfree(dev_minors[i]);
+        kfree(dev_minors[i]); // Free channel list container
     }
     unregister_chrdev(MAJOR_NUM, DEVICE_NAME);
 }
